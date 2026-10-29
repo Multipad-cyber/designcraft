@@ -10,6 +10,8 @@ use crate::{PagesError, Result, snappy};
 
 /// The most any one ZIP entry is read to, and the most all archives may expand to.
 const MAX_ENTRY: u64 = 1 << 30;
+/// The most all the files read from a package may hold together.
+const MAX_PACKAGE: u64 = 2 << 30;
 const MAX_OBJECTS_BYTES: usize = 1 << 30;
 
 /// `TSP.PackageMetadata`, which lists the files in `Data/`.
@@ -35,14 +37,22 @@ impl Package {
     pub fn read(bytes: &[u8]) -> Result<Package> {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| PagesError::NotPages(e.to_string()))?;
         let mut files = Vec::new();
+        let mut left = MAX_PACKAGE;
         for i in 0..zip.len() {
             let Ok(mut entry) = zip.by_index(i) else { continue };
             let name = entry.name().to_string();
             if !wanted(&name) {
                 continue;
             }
+            // One byte over the allowance tells a file that is too large from one that fits.
+            let allowance = left.min(MAX_ENTRY);
             let mut buf = Vec::new();
-            (&mut entry).take(MAX_ENTRY).read_to_end(&mut buf).map_err(|e| PagesError::Invalid(format!("{name}: {e}")))?;
+            (&mut entry).take(allowance.saturating_add(1)).read_to_end(&mut buf).map_err(|e| PagesError::Invalid(format!("{name}: {e}")))?;
+            let read = buf.len() as u64;
+            if read > allowance {
+                return Err(PagesError::Invalid(format!("{name}: the package is too large to open")));
+            }
+            left -= read;
             files.push((name, buf));
         }
         Package::from_files(files)

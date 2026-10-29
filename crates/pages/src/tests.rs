@@ -343,3 +343,30 @@ fn keynote_files_are_not_pages() {
     let doc = iwa(&[(1, 1, M::new())]);
     assert!(matches!(import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS), Err(PagesError::NotPages(_))));
 }
+
+#[test]
+fn groups_sharing_children_stay_within_the_visit_budget() {
+    // Each group holds the next one twice: 2^30 placements if every visit were followed.
+    let levels = 30u64;
+    let root = M::new().reference(3, 10).f32(30, 100.0).f32(31, 100.0);
+    let page = M::new().msg(1, M::new().uint(1, 0).msg(4, M::new().reference(1, 100)));
+    let mut objects = vec![(1, 10000, root), (10, 10010, page)];
+    for l in 0..levels {
+        let next = 100 + l + 1;
+        let g = M::new().msg(1, M::new().msg(1, geometry(0.0, 0.0, 10.0, 10.0, 0.0))).msg(2, M::new().uint(1, next)).msg(2, M::new().uint(1, next));
+        objects.push((100 + l, 3008, g));
+    }
+    objects.push((100 + levels, 2011, M::new().msg(1, M::new().msg(1, M::new().msg(1, geometry(1.0, 1.0, 5.0, 5.0, 0.0))))));
+    let doc = iwa(&objects);
+    let started = std::time::Instant::now();
+    let im = import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS).unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(30), "{:?}", started.elapsed());
+    assert!(im.warnings.iter().any(|w| w.contains("objects were imported")), "{:?}", im.warnings);
+}
+
+#[test]
+fn the_longest_literal_length_fails_without_overflowing() {
+    // A literal with a 4-byte length of 0xFFFFFFFF: one more than that overflows a 32-bit usize.
+    let block = [10, 63 << 2, 0xFF, 0xFF, 0xFF, 0xFF, b'x'];
+    assert!(snappy::decompress_block(&block, &mut Vec::new(), 1 << 20).is_err());
+}

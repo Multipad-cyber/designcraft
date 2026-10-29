@@ -28,6 +28,9 @@ const TABLE: u32 = 6000;
 
 /// Deepest group nesting followed.
 const MAX_DEPTH: usize = 32;
+/// Most drawables visited in one import: shared children of groups are visited once per
+/// placement, so depth alone doesn't bound the work.
+const MAX_VISITS: usize = 200_000;
 /// Most pages a document may ask for.
 const MAX_PAGES: u64 = 10_000;
 
@@ -75,6 +78,8 @@ pub(crate) struct Importer<'p> {
     para_styles: HashMap<u64, (CharProps, ParaProps)>,
     char_styles: HashMap<u64, CharProps>,
     assets: HashMap<u64, Option<AssetId>>,
+    /// Drawables still allowed to be visited ([`MAX_VISITS`]).
+    visits_left: usize,
 }
 
 pub(crate) fn import(pkg: &Package, fonts: FontLookup) -> Result<Import> {
@@ -90,6 +95,7 @@ pub(crate) fn import(pkg: &Package, fonts: FontLookup) -> Result<Import> {
         para_styles: HashMap::new(),
         char_styles: HashMap::new(),
         assets: HashMap::new(),
+        visits_left: MAX_VISITS,
     };
     im.layer = im.doc.default_layer();
     for g in groups {
@@ -278,6 +284,11 @@ impl<'p> Importer<'p> {
         if depth > MAX_DEPTH {
             return None;
         }
+        let Some(left) = self.visits_left.checked_sub(1) else {
+            self.warnings.insert(format!("only the first {MAX_VISITS} objects were imported"));
+            return None;
+        };
+        self.visits_left = left;
         let ty = self.pkg.type_of(id)?;
         let m = self.pkg.object(id)?;
         match ty {

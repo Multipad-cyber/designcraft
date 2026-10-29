@@ -48,7 +48,8 @@ fn table<'a>(storage: Msg<'a>, field: u32, map: &[usize], len: usize) -> Vec<(us
 
 /// The last entry at or before `pos`.
 fn at<T: Copy>(entries: &[(usize, T)], pos: usize) -> Option<T> {
-    entries.iter().take_while(|(p, _)| *p <= pos).last().map(|(_, v)| *v)
+    let n = entries.partition_point(|(p, _)| *p <= pos);
+    entries.get(n.checked_sub(1)?).map(|(_, v)| *v)
 }
 
 impl Importer<'_> {
@@ -83,7 +84,7 @@ impl Importer<'_> {
         let mut runs: Vec<CharRun> = Vec::new();
         for (i, &from) in cuts.iter().enumerate() {
             let to = cuts.get(i + 1).copied().unwrap_or(len);
-            let para_start = starts.iter().copied().take_while(|&s| s <= from).last().unwrap_or(0);
+            let para_start = starts.get(starts.partition_point(|&s| s <= from).saturating_sub(1)).copied().unwrap_or(0);
             let over = self.char_attrs(at(&paras, para_start), at(&chars, from).flatten(), at(&langs, from).flatten());
             let format = CharFormat { style: NO_CHAR_STYLE.into(), over };
             match runs.last_mut() {

@@ -45,7 +45,7 @@ fn next_op(block: &[u8], p: usize) -> Result<(Op<'_>, usize)> {
     Ok(match tag & 3 {
         0 => {
             let n = usize::from(tag >> 2);
-            let (len, p) = if n >= 60 { (le(field(n - 59)?) + 1, p + n - 59) } else { (n + 1, p) };
+            let (len, p) = if n >= 60 { (le(field(n - 59)?).saturating_add(1), p + n - 59) } else { (n + 1, p) };
             let lit = block.get(p..p.saturating_add(len)).ok_or_else(|| bad("truncated literal"))?;
             (Op::Literal(lit), p + len)
         }
