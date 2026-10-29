@@ -71,6 +71,10 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // Pages can save a document as a package folder.
+        if crate::io::is_dir(path) && crate::cmd::interchange::is_pages(path, &[]) {
+            return crate::cmd::interchange::open_pages(s, p);
+        }
         let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
         // The content decides first: a file's extension may be missing or wrong. The extension
         // then routes files whose content isn't recognised to the reader that explains why.
@@ -78,6 +82,9 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
         let native = designcraft_format::is_designcraft(&bytes) || bytes.trim_ascii_start().starts_with(b"{");
         if designcraft_idml::is_idml(&bytes) || (!native && (crate::cmd::interchange::is_indd(path, &bytes) || ext == "idml")) {
             return crate::cmd::interchange::open_idml(s, p);
+        }
+        if !native && crate::cmd::interchange::is_pages(path, &bytes) {
+            return crate::cmd::interchange::open_pages(s, p);
         }
         if !native && ext != designcraft_format::EXTENSION {
             return Err(bad("file.open", format!("{path}: not a DesignCraft or IDML file")));
@@ -146,6 +153,9 @@ pub(super) fn file_open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     // signature (or their name).
     if designcraft_idml::is_idml(&b) || crate::cmd::interchange::is_indd(str_param(p, "name").unwrap_or_default(), &b) {
         return crate::cmd::interchange::open_idml(s, p);
+    }
+    if crate::cmd::interchange::is_pages(str_param(p, "name").unwrap_or_default(), &b) {
+        return crate::cmd::interchange::open_pages(s, p);
     }
     let (mut d, warnings) = load_bytes(&b)?;
     crate::cmd::datamerge::resolve_sources_on_open(&mut d, None);
@@ -264,6 +274,26 @@ mod document_fonts_tests {
         assert!(e.contains("InDesign Markup (IDML)") && !e.contains("expected value"), "{e}");
         let e = s.execute("file.openBytes", &json!({"name": "Brochure.indt", "base64": ""})).unwrap_err().to_string();
         assert!(e.contains("InDesign Markup (IDML)"), "{e}");
+        assert!(s.doc().is_err(), "nothing was opened");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pages_files_and_package_folders_go_to_the_pages_reader() {
+        // The name routes them; the reader then says what it couldn't read.
+        let dir = temp_dir("pages");
+        let file = dir.join("Poster.PAGES");
+        std::fs::write(&file, b"not a Pages document").unwrap();
+        let folder = dir.join("Flyer.pages");
+        std::fs::create_dir_all(folder.join("Index")).unwrap();
+        std::fs::write(folder.join("Index").join("Document.iwa"), [0u8, 9, 0, 0, 1]).unwrap();
+        let mut s = Session::new();
+        for path in [&file, &folder] {
+            let e = s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap_err().to_string();
+            assert!(e.contains("Pages document"), "{e}");
+        }
+        let e = s.execute("file.openBytes", &json!({"name": "Poster.pages", "base64": ""})).unwrap_err().to_string();
+        assert!(e.contains("Pages document"), "{e}");
         assert!(s.doc().is_err(), "nothing was opened");
         let _ = std::fs::remove_dir_all(&dir);
     }

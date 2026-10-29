@@ -12,6 +12,11 @@
 
 DesignCraft aims at full Adobe InDesign parity — and to be better: faster, open (documented JSON format + IDML), scriptable by agents (MCP), and available on the web.
 
+- **2026-10-29** · File ▸ Open reads Apple Pages documents (`.pages`, single files and package
+  folders, Pages 5.1 and later) through the new `designcraft-pages` crate (`file.openPages`):
+  pages, shapes, text boxes, images with masks and opacity, groups, rotation, fills, strokes and
+  text formatting. Tables, charts, shadows, gradients, inline objects and body-text flow are
+  named in the open warnings. Pages is not an InDesign format: no readiness percentage change.
 - **2026-10-25** · The application bar uses craft-window's shared title-bar code. A drag that
   starts on a floating panel over the bar moves the panel, not the window, and in full screen the
   bar no longer zooms or moves the window. No readiness percentage change.
