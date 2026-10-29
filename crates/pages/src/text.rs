@@ -57,6 +57,9 @@ impl Importer<'_> {
     pub(crate) fn story(&mut self, id: StoryId, storage: Msg) -> Story {
         let raw: String =
             storage.all(3).filter_map(|v| if let crate::proto::Value::Bytes(b) = v { std::str::from_utf8(b).ok() } else { None }).collect();
+        if raw.contains('\u{FFFC}') {
+            self.warnings.insert("inline objects are not imported yet".into());
+        }
         let (mut text, map) = map_text(&raw);
         if text.ends_with('\n') {
             text.pop();

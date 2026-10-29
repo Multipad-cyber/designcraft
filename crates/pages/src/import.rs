@@ -74,7 +74,7 @@ pub(crate) struct Importer<'p> {
     fonts: FontLookup<'p>,
     pub(crate) doc: Document,
     layer: LayerId,
-    warnings: BTreeSet<String>,
+    pub(crate) warnings: BTreeSet<String>,
     para_styles: HashMap<u64, (CharProps, ParaProps)>,
     char_styles: HashMap<u64, CharProps>,
     assets: HashMap<u64, Option<AssetId>>,

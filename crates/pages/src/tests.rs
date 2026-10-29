@@ -339,6 +339,14 @@ fn unsupported_objects_are_named_in_warnings() {
 }
 
 #[test]
+fn skipped_inline_objects_are_named_in_warnings() {
+    let root = M::new().reference(4, 40).f32(30, 100.0).f32(31, 100.0);
+    let doc = iwa(&[(1, 10000, root), (40, 2001, storage("See \u{FFFC} here", &[], &[]))]);
+    let im = import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS).unwrap();
+    assert!(im.warnings.iter().any(|w| w.contains("inline objects")), "{:?}", im.warnings);
+}
+
+#[test]
 fn keynote_files_are_not_pages() {
     let doc = iwa(&[(1, 1, M::new())]);
     assert!(matches!(import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS), Err(PagesError::NotPages(_))));

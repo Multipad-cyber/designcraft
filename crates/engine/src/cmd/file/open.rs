@@ -84,6 +84,8 @@ fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
             return crate::cmd::interchange::open_idml(s, p);
         }
         if !native && crate::cmd::interchange::is_pages(path, &bytes) {
+            // The Pages reader reads the file again; don't hold two copies.
+            drop(bytes);
             return crate::cmd::interchange::open_pages(s, p);
         }
         if !native && ext != designcraft_format::EXTENSION {
