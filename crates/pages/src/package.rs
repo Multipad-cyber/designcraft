@@ -73,7 +73,9 @@ impl Package {
                 let raw =
                     snappy::unframe(&buf, MAX_OBJECTS_BYTES.saturating_sub(expanded)).map_err(|e| PagesError::Invalid(format!("{name}: {e}")))?;
                 expanded += raw.len();
-                pkg.add_archive(raw);
+                if !pkg.add_archive(raw) {
+                    return Err(PagesError::Invalid(format!("{name}: a damaged object record")));
+                }
             } else if let Some(file) = name.strip_prefix("Data/") {
                 pkg.data.insert(file.to_string(), buf);
             }
@@ -85,20 +87,22 @@ impl Package {
         Ok(pkg)
     }
 
-    fn add_archive(&mut self, raw: Vec<u8>) {
+    /// Adds the objects of an unpacked archive; false when a record is damaged (the package is
+    /// then rejected rather than opened with part of its objects).
+    fn add_archive(&mut self, raw: Vec<u8>) -> bool {
         let a = self.archives.len();
         let mut p = 0usize;
         while p < raw.len() {
-            let Some((len, start)) = varint(&raw, p) else { break };
-            let Some(end) = usize::try_from(len).ok().and_then(|l| start.checked_add(l)) else { break };
-            let Some(info) = raw.get(start..end).map(Msg) else { break };
+            let Some((len, start)) = varint(&raw, p) else { return false };
+            let Some(end) = usize::try_from(len).ok().and_then(|l| start.checked_add(l)) else { return false };
+            let Some(info) = raw.get(start..end).map(Msg) else { return false };
             p = end;
-            let Some(id) = info.uint(1) else { break };
+            let Some(id) = info.uint(1) else { return false };
             // An object may carry several messages (patches over the first); the first is the object.
             let mut first = true;
             for mi in info.msgs(2) {
-                let Some(len) = mi.uint(3).and_then(|l| usize::try_from(l).ok()) else { return };
-                let Some(range_end) = p.checked_add(len).filter(|&e| e <= raw.len()) else { return };
+                let Some(len) = mi.uint(3).and_then(|l| usize::try_from(l).ok()) else { return false };
+                let Some(range_end) = p.checked_add(len).filter(|&e| e <= raw.len()) else { return false };
                 if first && let Some(ty) = mi.uint(1).and_then(|t| u32::try_from(t).ok()) {
                     self.objects.entry(id).or_insert((ty, a, p..range_end));
                 }
@@ -107,6 +111,7 @@ impl Package {
             }
         }
         self.archives.push(raw);
+        true
     }
 
     fn read_data_names(&mut self) {

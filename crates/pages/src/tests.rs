@@ -23,6 +23,11 @@ fn snappy_literal(data: &[u8]) -> Vec<u8> {
 
 /// An `.iwa` stream of `objects` (identifier, type, message).
 fn iwa(objects: &[(u64, u32, M)]) -> Vec<u8> {
+    frame(&records(objects))
+}
+
+/// The unpacked records of `objects`.
+fn records(objects: &[(u64, u32, M)]) -> Vec<u8> {
     let mut raw = Vec::new();
     for (id, ty, m) in objects {
         let info = M::new().uint(1, *id).msg(2, M::new().uint(1, u64::from(*ty)).uint(3, m.0.len() as u64));
@@ -30,7 +35,12 @@ fn iwa(objects: &[(u64, u32, M)]) -> Vec<u8> {
         raw.extend_from_slice(&info.0);
         raw.extend_from_slice(&m.0);
     }
-    let block = snappy_literal(&raw);
+    raw
+}
+
+/// `raw` as one Snappy-framed `.iwa` chunk.
+fn frame(raw: &[u8]) -> Vec<u8> {
+    let block = snappy_literal(raw);
     let mut out = vec![0];
     out.extend_from_slice(&(block.len() as u32).to_le_bytes()[..3]);
     out.extend_from_slice(&block);
@@ -344,6 +354,56 @@ fn skipped_inline_objects_are_named_in_warnings() {
     let doc = iwa(&[(1, 10000, root), (40, 2001, storage("See \u{FFFC} here", &[], &[]))]);
     let im = import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS).unwrap();
     assert!(im.warnings.iter().any(|w| w.contains("inline objects")), "{:?}", im.warnings);
+}
+
+/// A shape at `x` on page 1.
+fn shape_at(x: f32) -> M {
+    M::new().msg(1, M::new().msg(1, M::new().msg(1, geometry(x, 0.0, 10.0, 10.0, 0.0))))
+}
+
+#[test]
+fn drawables_keep_the_document_paint_order() {
+    // The page lists 20, 21, 22; the document paints 22, then 20, then 21 (back to front).
+    let root = M::new().reference(3, 10).reference(20, 11).f32(30, 100.0).f32(31, 100.0);
+    let mut entry = M::new().uint(1, 0);
+    for id in [20, 21, 22] {
+        entry = entry.msg(4, M::new().reference(1, id));
+    }
+    let order = M::new().reference(1, 22).reference(1, 20).reference(1, 21);
+    let doc = iwa(&[
+        (1, 10000, root),
+        (10, 10010, M::new().msg(1, entry)),
+        (11, 10015, order),
+        (20, 2011, shape_at(20.0)),
+        (21, 2011, shape_at(21.0)),
+        (22, 2011, shape_at(22.0)),
+    ]);
+    let im = import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS).unwrap();
+    let xs: Vec<f64> = im.document.spreads[0].items.iter().map(|i| (i.xf * Point::new(0.0, 0.0)).x).collect();
+    assert_eq!(xs, [22.0, 20.0, 21.0]);
+}
+
+#[test]
+fn a_damaged_record_after_good_objects_rejects_the_package() {
+    let mut raw = records(&[(1, 10000, M::new().f32(30, 100.0).f32(31, 100.0))]);
+    // A record header that claims more bytes than follow.
+    raw.extend_from_slice(&[40, 1, 2]);
+    let doc = frame(&raw);
+    assert!(matches!(import(&zip(&[("Index/Document.iwa", &doc)]), NO_FONTS), Err(PagesError::Invalid(_))));
+}
+
+#[test]
+fn images_without_a_readable_size_are_named_in_warnings() {
+    let root = M::new().reference(3, 10).f32(30, 100.0).f32(31, 100.0);
+    let group = M::new().msg(1, M::new().uint(1, 0).msg(4, M::new().reference(1, 20)));
+    let image = M::new().msg(1, M::new().msg(1, geometry(0.0, 0.0, 50.0, 50.0, 0.0))).msg(11, M::new().uint(1, 7));
+    let metadata = M::new().msg(4, M::new().uint(1, 7).str(3, "art.pdf").str(4, "art-7.pdf"));
+    let doc = iwa(&[(1, 10000, root), (10, 10010, group), (20, 3005, image)]);
+    let meta = iwa(&[(2, 11006, metadata)]);
+    let pdf: &[u8] = b"%PDF-1.4\n%%EOF\n";
+    let im = import(&zip(&[("Index/Document.iwa", &doc), ("Index/Metadata.iwa", &meta), ("Data/art-7.pdf", pdf)]), NO_FONTS).unwrap();
+    assert!(im.document.spreads[0].items.is_empty());
+    assert!(im.warnings.iter().any(|w| w.contains("PDFs")), "{:?}", im.warnings);
 }
 
 #[test]

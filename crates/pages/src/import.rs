@@ -19,6 +19,7 @@ use crate::{FontLookup, Import, PagesError, Result};
 
 const DOCUMENT: u32 = 10000;
 const PAGE_GROUP: u32 = 10010;
+const Z_ORDER: u32 = 10015;
 const STORAGE: u32 = 2001;
 const SHAPE: u32 = 2011;
 const IMAGE: u32 = 3005;
@@ -98,12 +99,20 @@ pub(crate) fn import(pkg: &Package, fonts: FontLookup) -> Result<Import> {
         visits_left: MAX_VISITS,
     };
     im.layer = im.doc.default_layer();
+    // The document's paint order (`TP.DrawablesZOrderArchive`, root field 20), back to front.
+    let z: HashMap<u64, usize> = root
+        .reference(20)
+        .and_then(|z| pkg.typed(z, Z_ORDER))
+        .map(|z| z.msgs(1).filter_map(|r| r.uint(1)).enumerate().map(|(i, id)| (id, i)).collect())
+        .unwrap_or_default();
     for g in groups {
         let Some(page) = g.uint(1).and_then(|p| usize::try_from(p).ok()) else { continue };
         let Some((si, pi)) = im.doc.page_loc(page) else { continue };
         let x = im.doc.spreads.get(si).and_then(|s| s.pages.get(pi)).map_or(0.0, |p| p.x);
-        for obj in g.msgs(4) {
-            let Some(id) = obj.reference(1) else { continue };
+        // Drawables the order doesn't list stay above those it does, in page-group order.
+        let mut ids: Vec<u64> = g.msgs(4).filter_map(|o| o.reference(1)).collect();
+        ids.sort_by_key(|id| z.get(id).copied().unwrap_or(usize::MAX));
+        for id in ids {
             if let Some(mut item) = im.drawable(id, 0) {
                 item.xf = Affine::translate((x, 0.0)) * item.xf;
                 im.doc.insert_item(SpreadRef::Doc(si), item, None).map_err(|e| PagesError::Invalid(e.to_string()))?;
@@ -348,7 +357,11 @@ impl<'p> Importer<'p> {
             self.warnings.insert("some images are missing from the package or in a format DesignCraft can't place".into());
             return None;
         };
-        let natural = self.doc.assets.get(&asset).and_then(|a| designcraft_images::natural_size(&a.data)).filter(|(w, h)| *w > 0.0 && *h > 0.0)?;
+        let Some(natural) = self.doc.assets.get(&asset).and_then(|a| designcraft_images::natural_size(&a.data)).filter(|(w, h)| *w > 0.0 && *h > 0.0)
+        else {
+            self.warnings.insert("some images (such as PDFs) have no size DesignCraft can read and were skipped".into());
+            return None;
+        };
         // The mask (a drawable over the image, in its space) is the frame; without one the frame
         // is the image's box.
         let (path, kind) = match m.reference(5).and_then(|k| self.pkg.typed(k, MASK)) {
